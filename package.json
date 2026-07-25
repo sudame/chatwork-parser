@@ -1,5 +1,5 @@
 {
-  "name": "chatwork-parser",
+  "name": "@sudame/chatwork-parser",
   "version": "0.1.0",
   "description": "Parser for Chatwork message notation",
   "type": "module",

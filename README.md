@@ -1,4 +1,4 @@
-# chatwork-parser
+# @sudame/chatwork-parser
 
 Chatwork のメッセージ記法を解析して JSON (AST) に変換する TypeScript 製パーサー。
 
@@ -9,7 +9,7 @@ Chatwork のメッセージ記法を解析して JSON (AST) に変換する Type
 npm には未公開です。ローカルパスか git URL で依存に追加してください。
 
 ```ts
-import { parse } from "chatwork-parser";
+import { parse } from "@sudame/chatwork-parser";
 
 const nodes = parse("[To:1234567] 山田さん\n[info][title]週次報告[/title]進捗は順調です[/info]");
 ```
@@ -37,7 +37,7 @@ const nodes = parse("[To:1234567] 山田さん\n[info][title]週次報告[/title
 中身が絞り込まれます。
 
 ```ts
-import { parse, type ChatworkNode } from "chatwork-parser";
+import { parse, type ChatworkNode } from "@sudame/chatwork-parser";
 
 function toPlainText(nodes: ChatworkNode[]): string {
   return nodes
