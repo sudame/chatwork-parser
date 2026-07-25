@@ -4,10 +4,10 @@ import {
   lazy,
   notFollowedBy,
   optional,
+  type Parser,
   regex,
   seq,
   str,
-  type Parser,
 } from "./combinator.ts";
 import type { ChatworkNode, TextNode } from "./types.ts";
 
@@ -40,18 +40,14 @@ const literal = <T extends string>(value: T): Parser<T> =>
 
 /** `[To:{account_id}]` */
 const to = str("[To:")
-  .then(digits)
+  .next(digits)
   .skip(str("]"))
   .map((accountId): ChatworkNode => ({ type: "to", accountId }));
 
 /** `[rp aid={account_id} to={room_id}-{message_id}]` */
 const reply = str("[rp aid=")
-  .then(
-    seq(
-      digits,
-      str(" to=").then(digits),
-      str("-").then(regex(/[0-9A-Za-z]+/)),
-    ),
+  .next(
+    seq(digits, str(" to=").next(digits), str("-").next(regex(/[0-9A-Za-z]+/))),
   )
   .skip(str("]"))
   .map(
@@ -67,17 +63,15 @@ const reply = str("[rp aid=")
 const hr = str("[hr]").map((): ChatworkNode => ({ type: "hr" }));
 
 /** `[picon:{id}]` / `[pname:{id}]` / `[piconname:{id}]` */
-const account = (
-  type: "picon" | "pname" | "piconname",
-): Parser<ChatworkNode> =>
+const account = (type: "picon" | "pname" | "piconname"): Parser<ChatworkNode> =>
   str(`[${type}:`)
-    .then(digits)
+    .next(digits)
     .skip(str("]"))
     .map((accountId): ChatworkNode => ({ type, accountId }));
 
 /** `[dtext:{key}]` */
 const dtext = str("[dtext:")
-  .then(regex(/[0-9A-Za-z_]+/))
+  .next(regex(/[0-9A-Za-z_]+/))
   .skip(str("]"))
   .map((key): ChatworkNode => ({ type: "dtext", key }));
 
@@ -87,7 +81,7 @@ const dtext = str("[dtext:")
  * 中身はタグとして解釈せず、最初の `[/url]` までをそのまま URL として扱う。
  */
 const url = str("[url]")
-  .then(regex(/(?:(?!\[\/url\])[\s\S])+/))
+  .next(regex(/(?:(?!\[\/url\])[\s\S])+/))
   .skip(str("[/url]"))
   .map((value): ChatworkNode => ({ type: "url", url: value }));
 
@@ -106,19 +100,21 @@ const contentUntil = (close: string | null): Parser<ChatworkNode[]> =>
     /** タグとして解釈できなかった `[`。閉じタグの `[` は本文に含めない。 */
     const openBracket = str("[").map(text);
     const bracket =
-      close === null ? openBracket : notFollowedBy(str(close)).then(openBracket);
+      close === null
+        ? openBracket
+        : notFollowedBy(str(close)).next(openBracket);
 
     return alt<ChatworkNode>(node, plain, bracket).many().map(mergeText);
   });
 
 /** `[qtmeta aid={account_id} time={timestamp}]` */
 const qtmeta = str("[qtmeta aid=")
-  .then(seq(digits, str(" time=").then(digits)))
+  .next(seq(digits, str(" time=").next(digits)))
   .skip(str("]"));
 
 /** `[qt][qtmeta ...]...[/qt]` — `[qtmeta]` は `[qt]` の直後にある場合のみ有効。 */
 const quote = str("[qt]")
-  .then(seq(optional(qtmeta), contentUntil("[/qt]")))
+  .next(seq(optional(qtmeta), contentUntil("[/qt]")))
   .skip(str("[/qt]"))
   .map(
     ([meta, children]): ChatworkNode => ({
@@ -138,12 +134,12 @@ const taskStatus = alt(literal("open"), literal("done"));
 
 /** `lt` と `ltype` は対で指定される。期限のないタスクではどちらも現れない。 */
 const taskLimit = seq(
-  str(" lt=").then(digits),
-  str(" ltype=").then(alt(literal("time"), literal("date"))),
+  str(" lt=").next(digits),
+  str(" ltype=").next(alt(literal("time"), literal("date"))),
 );
 
 const taskHeader = str("[task aid=")
-  .then(seq(accountIdList, str(" st=").then(taskStatus), optional(taskLimit)))
+  .next(seq(accountIdList, str(" st=").next(taskStatus), optional(taskLimit)))
   .skip(str("]"));
 
 /** `[task aid=... st=... lt=... ltype=...]...[/task]` */
@@ -162,12 +158,12 @@ const task = seq(taskHeader, contentUntil("[/task]"))
 
 /** `[title]...[/title]` — `[info]` の直後にある場合のみ有効。 */
 const title = str("[title]")
-  .then(contentUntil("[/title]"))
+  .next(contentUntil("[/title]"))
   .skip(str("[/title]"));
 
 /** `[info]([title]...[/title])...[/info]` */
 const info = str("[info]")
-  .then(seq(optional(title), contentUntil("[/info]")))
+  .next(seq(optional(title), contentUntil("[/info]")))
   .skip(str("[/info]"))
   .map(
     ([titleNodes, children]): ChatworkNode => ({

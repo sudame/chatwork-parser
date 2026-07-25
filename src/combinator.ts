@@ -28,8 +28,13 @@ export class Parser<T> {
     });
   }
 
-  /** 続けて next を適用し、next の値を返す。 */
-  then<U>(next: Parser<U>): Parser<U> {
+  /**
+   * 続けて next を適用し、next の値を返す。
+   *
+   * `then` という名前にすると Parser が thenable になり、`await` や Promise の
+   * 解決に巻き込まれてしまうため避けている。
+   */
+  next<U>(next: Parser<U>): Parser<U> {
     return new Parser<U>((input, index) => {
       const result = this.run(input, index);
       if (!result.ok) return FAILURE;
@@ -78,7 +83,9 @@ export function str(expected: string): Parser<string> {
 
 /** 現在位置から始まる正規表現にマッチする。 */
 export function regex(pattern: RegExp): Parser<string> {
-  const flags = pattern.flags.includes("y") ? pattern.flags : `${pattern.flags}y`;
+  const flags = pattern.flags.includes("y")
+    ? pattern.flags
+    : `${pattern.flags}y`;
   const sticky = new RegExp(pattern.source, flags);
   return new Parser<string>((input, index) => {
     sticky.lastIndex = index;

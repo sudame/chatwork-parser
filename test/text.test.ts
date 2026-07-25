@@ -28,10 +28,7 @@ runCases([
   {
     name: "連続するテキストは 1 つの text ノードにまとめられる",
     input: "[hr]あ[unknown]い",
-    expected: [
-      { type: "hr" },
-      { type: "text", value: "あ[unknown]い" },
-    ],
+    expected: [{ type: "hr" }, { type: "text", value: "あ[unknown]い" }],
   },
 
   // ------------------------------------------------------------ 壊れた記法

@@ -1,0 +1,29 @@
+# Helix のプロジェクトローカル設定。
+#
+# 言語サーバーはどちらも devDependencies に入っているので、`npm install` だけで
+# 追加のグローバルインストールなしに動く。コマンドを相対パスで指定しているため、
+# hx はリポジトリのルートで起動すること。
+#
+# 型チェックと補完は typescript-language-server、整形と lint は Biome が担当する。
+# 両方に整形させると競合するので、typescript-language-server からは format を外す。
+
+[language-server.typescript-language-server]
+command = "./node_modules/.bin/typescript-language-server"
+args = ["--stdio"]
+
+[language-server.biome]
+command = "./node_modules/.bin/biome"
+args = ["lsp-proxy"]
+
+[[language]]
+name = "typescript"
+language-servers = [
+  { name = "typescript-language-server", except-features = ["format"] },
+  "biome",
+]
+auto-format = true
+
+[[language]]
+name = "json"
+language-servers = ["biome"]
+auto-format = true

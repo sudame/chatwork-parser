@@ -232,7 +232,10 @@ runCases([
     name: "lt が数値でないタスクはテキストとして扱われる",
     input: "[task aid=1 st=open lt=abc ltype=time]本文[/task]",
     expected: [
-      { type: "text", value: "[task aid=1 st=open lt=abc ltype=time]本文[/task]" },
+      {
+        type: "text",
+        value: "[task aid=1 st=open lt=abc ltype=time]本文[/task]",
+      },
     ],
   },
   {
@@ -267,7 +270,8 @@ runCases([
   },
   {
     name: "壊れたタスクを含むインフォメーションは本文がテキストになる",
-    input: "[info][title][dtext:task_added][/title][task aid=1]test[/task][/info]",
+    input:
+      "[info][title][dtext:task_added][/title][task aid=1]test[/task][/info]",
     expected: [
       {
         type: "info",

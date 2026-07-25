@@ -151,7 +151,8 @@ runCases([
   },
   {
     name: "引用の中のインフォメーションをパースする",
-    input: "[qt][qtmeta aid=1 time=100][info][title]件名[/title]本文[/info][/qt]",
+    input:
+      "[qt][qtmeta aid=1 time=100][info][title]件名[/title]本文[/info][/qt]",
     expected: [
       {
         type: "quote",

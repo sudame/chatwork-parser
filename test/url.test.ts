@@ -52,9 +52,7 @@ runCases([
   {
     name: "入れ子の URL 記法は最初の閉じタグまでを URL として扱う",
     input: "[url]https://a.example[url]https://b.example[/url]",
-    expected: [
-      { type: "url", url: "https://a.example[url]https://b.example" },
-    ],
+    expected: [{ type: "url", url: "https://a.example[url]https://b.example" }],
   },
   {
     name: "属性付きの URL 記法はテキストとして扱われる",
