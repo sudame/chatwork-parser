@@ -1,46 +1,162 @@
-import type { ChatworkNode } from "./types.ts";
-
-/** `[qt]` / `[info]` / `[title]` のように開始タグと閉じタグを持つ記法の解析途中の状態。 */
-type Frame = {
-  tag: "qt" | "info" | "title";
-  /** 開始タグの文字列。閉じられなかった場合にテキストへ戻すために保持する。 */
-  raw: string;
-  nodes: ChatworkNode[];
-  /** `[qt]` 用。`[qtmeta]` から取り出した値。 */
-  accountId: number | null;
-  time: number | null;
-  metaConsumed: boolean;
-  /** `[info]` 用。`[title]` から取り出した値。 */
-  title: ChatworkNode[] | null;
-};
-
-const TO_PATTERN = /^To:(\d+)$/;
-const REPLY_PATTERN = /^rp aid=(\d+) to=(\d+)-([0-9A-Za-z]+)$/;
-const QTMETA_PATTERN = /^qtmeta aid=(\d+) time=(\d+)$/;
-const ACCOUNT_PATTERN = /^(picon|pname|piconname):(\d+)$/;
-
-const URL_CLOSE = "[/url]";
+import {
+  alt,
+  eof,
+  lazy,
+  notFollowedBy,
+  optional,
+  regex,
+  seq,
+  str,
+  type Parser,
+} from "./combinator.ts";
+import type { ChatworkNode, TextNode } from "./types.ts";
 
 /**
- * `source[start]` から始まるタグを読み取る。
- * `]` に到達する前に `[` か改行が現れた場合はタグとして扱わない。
+ * 記法として解釈できない部分は `[` 単体などの細かい text ノードになるため、
+ * 隣り合う text ノードを 1 つにまとめる。
  */
-function readTag(
-  source: string,
-  start: number,
-): { inner: string; raw: string } | null {
-  for (let i = start + 1; i < source.length; i++) {
-    const char = source[i];
-    if (char === "]") {
-      return {
-        inner: source.slice(start + 1, i),
-        raw: source.slice(start, i + 1),
-      };
+function mergeText(nodes: ChatworkNode[]): ChatworkNode[] {
+  const merged: ChatworkNode[] = [];
+  for (const node of nodes) {
+    const last = merged[merged.length - 1];
+    if (node.type === "text" && last?.type === "text") {
+      last.value += node.value;
+      continue;
     }
-    if (char === "[" || char === "\n") return null;
+    merged.push(node);
   }
-  return null;
+  return merged;
 }
+
+const text = (value: string): TextNode => ({ type: "text", value });
+
+const digits = regex(/\d+/).map(Number);
+
+// ---------------------------------------------------------------- 単独のタグ
+
+/** `[To:{account_id}]` */
+const to = str("[To:")
+  .then(digits)
+  .skip(str("]"))
+  .map((accountId): ChatworkNode => ({ type: "to", accountId }));
+
+/** `[rp aid={account_id} to={room_id}-{message_id}]` */
+const reply = str("[rp aid=")
+  .then(
+    seq(
+      digits,
+      str(" to=").then(digits),
+      str("-").then(regex(/[0-9A-Za-z]+/)),
+    ),
+  )
+  .skip(str("]"))
+  .map(
+    ([accountId, roomId, messageId]): ChatworkNode => ({
+      type: "reply",
+      accountId,
+      roomId,
+      messageId,
+    }),
+  );
+
+/** `[hr]` */
+const hr = str("[hr]").map((): ChatworkNode => ({ type: "hr" }));
+
+/** `[picon:{id}]` / `[pname:{id}]` / `[piconname:{id}]` */
+const account = (
+  type: "picon" | "pname" | "piconname",
+): Parser<ChatworkNode> =>
+  str(`[${type}:`)
+    .then(digits)
+    .skip(str("]"))
+    .map((accountId): ChatworkNode => ({ type, accountId }));
+
+/**
+ * `[url]http://...[/url]`
+ *
+ * 中身はタグとして解釈せず、最初の `[/url]` までをそのまま URL として扱う。
+ */
+const url = str("[url]")
+  .then(regex(/(?:(?!\[\/url\])[\s\S])+/))
+  .skip(str("[/url]"))
+  .map((value): ChatworkNode => ({ type: "url", url: value }));
+
+// ---------------------------------------------------------- 入れ子になるタグ
+
+/**
+ * 閉じタグまでの本文。
+ *
+ * `close` に到達すると本文の解析を打ち切る。`close` が null の場合は閉じタグを
+ * 持たない最上位（メッセージ全体）を表す。
+ */
+const contentUntil = (close: string | null): Parser<ChatworkNode[]> =>
+  lazy(() => {
+    /** タグの開始になり得ない文字の並び。 */
+    const plain = regex(/[^[]+/).map(text);
+    /** タグとして解釈できなかった `[`。閉じタグの `[` は本文に含めない。 */
+    const openBracket = str("[").map(text);
+    const bracket =
+      close === null ? openBracket : notFollowedBy(str(close)).then(openBracket);
+
+    return alt<ChatworkNode>(node, plain, bracket).many().map(mergeText);
+  });
+
+/** `[qtmeta aid={account_id} time={timestamp}]` */
+const qtmeta = str("[qtmeta aid=")
+  .then(seq(digits, str(" time=").then(digits)))
+  .skip(str("]"));
+
+/** `[qt][qtmeta ...]...[/qt]` — `[qtmeta]` は `[qt]` の直後にある場合のみ有効。 */
+const quote = str("[qt]")
+  .then(seq(optional(qtmeta), contentUntil("[/qt]")))
+  .skip(str("[/qt]"))
+  .map(
+    ([meta, children]): ChatworkNode => ({
+      type: "quote",
+      accountId: meta?.[0] ?? null,
+      time: meta?.[1] ?? null,
+      children,
+    }),
+  );
+
+/** `[title]...[/title]` — `[info]` の直後にある場合のみ有効。 */
+const title = str("[title]")
+  .then(contentUntil("[/title]"))
+  .skip(str("[/title]"));
+
+/** `[info]([title]...[/title])...[/info]` */
+const info = str("[info]")
+  .then(seq(optional(title), contentUntil("[/info]")))
+  .skip(str("[/info]"))
+  .map(
+    ([titleNodes, children]): ChatworkNode => ({
+      type: "info",
+      title: titleNodes,
+      children,
+    }),
+  );
+
+/**
+ * いずれかの記法。
+ *
+ * 途中で失敗した記法はバックトラックして未消費に戻るため、閉じ忘れなどの壊れた
+ * 記法は最終的に `[` から順にテキストとして読み直される。
+ */
+const node: Parser<ChatworkNode> = lazy(() =>
+  alt<ChatworkNode>(
+    quote,
+    info,
+    hr,
+    to,
+    reply,
+    account("picon"),
+    account("pname"),
+    account("piconname"),
+    url,
+  ),
+);
+
+const document = contentUntil(null).skip(eof);
 
 /**
  * Chatwork のメッセージ本文をパースして AST を返す。
@@ -48,200 +164,10 @@ function readTag(
  * 記法として解釈できなかった部分は、元の文字列のまま text ノードとして出力する。
  */
 export function parse(source: string): ChatworkNode[] {
-  const root: ChatworkNode[] = [];
-  const stack: Frame[] = [];
-
-  const top = (): Frame | undefined => stack[stack.length - 1];
-  const target = (): ChatworkNode[] => top()?.nodes ?? root;
-
-  const pushText = (value: string): void => {
-    if (value === "") return;
-    const nodes = target();
-    const last = nodes[nodes.length - 1];
-    if (last?.type === "text") last.value += value;
-    else nodes.push({ type: "text", value });
-  };
-
-  const pushNode = (node: ChatworkNode): void => {
-    target().push(node);
-  };
-
-  /** 閉じられなかったフレームを開始タグのテキストと子ノードに戻し、親へ移す。 */
-  const unwind = (): void => {
-    const frame = stack.pop();
-    if (frame === undefined) return;
-    pushText(frame.raw);
-    for (const node of frame.nodes) {
-      if (node.type === "text") pushText(node.value);
-      else pushNode(node);
-    }
-  };
-
-  const openFrame = (tag: Frame["tag"], raw: string): void => {
-    stack.push({
-      tag,
-      raw,
-      nodes: [],
-      accountId: null,
-      time: null,
-      metaConsumed: false,
-      title: null,
-    });
-  };
-
-  /** 閉じタグを処理する。スタック最上位と一致しない場合は false を返す。 */
-  const closeFrame = (tag: Frame["tag"]): boolean => {
-    // [title] は本文用のコンテナではないため、別の閉じタグが来たら暗黙に閉じる。
-    while (tag !== "title" && top()?.tag === "title") unwind();
-
-    const frame = top();
-    if (frame === undefined || frame.tag !== tag) return false;
-    stack.pop();
-
-    switch (frame.tag) {
-      case "title": {
-        // [title] は [info] の直後でのみ開かれるため、親は必ず [info]。
-        const parent = top();
-        if (parent !== undefined) parent.title = frame.nodes;
-        return true;
-      }
-      case "qt":
-        pushNode({
-          type: "quote",
-          accountId: frame.accountId,
-          time: frame.time,
-          children: frame.nodes,
-        });
-        return true;
-      case "info":
-        pushNode({
-          type: "info",
-          title: frame.title,
-          children: frame.nodes,
-        });
-        return true;
-    }
-  };
-
-  let index = 0;
-  while (index < source.length) {
-    if (source[index] !== "[") {
-      const next = source.indexOf("[", index);
-      const end = next === -1 ? source.length : next;
-      pushText(source.slice(index, end));
-      index = end;
-      continue;
-    }
-
-    const tag = readTag(source, index);
-    if (tag === null) {
-      pushText("[");
-      index += 1;
-      continue;
-    }
-    const { inner, raw } = tag;
-
-    // [url] の中身はタグとして解釈せず、最初の [/url] までをそのまま URL とする。
-    if (inner === "url") {
-      const closeAt = source.indexOf(URL_CLOSE, index + raw.length);
-      const url = closeAt === -1 ? "" : source.slice(index + raw.length, closeAt);
-      if (closeAt !== -1 && url !== "") {
-        pushNode({ type: "url", url });
-        index = closeAt + URL_CLOSE.length;
-        continue;
-      }
-      pushText("[");
-      index += 1;
-      continue;
-    }
-
-    if (inner === "qt" || inner === "info") {
-      openFrame(inner, raw);
-      index += raw.length;
-      continue;
-    }
-
-    if (inner === "title") {
-      const parent = top();
-      if (
-        parent?.tag === "info" &&
-        parent.title === null &&
-        parent.nodes.length === 0
-      ) {
-        openFrame("title", raw);
-        index += raw.length;
-        continue;
-      }
-      pushText("[");
-      index += 1;
-      continue;
-    }
-
-    if (inner === "/qt" || inner === "/info" || inner === "/title") {
-      if (closeFrame(inner.slice(1) as Frame["tag"])) {
-        index += raw.length;
-        continue;
-      }
-      pushText("[");
-      index += 1;
-      continue;
-    }
-
-    if (inner === "hr") {
-      pushNode({ type: "hr" });
-      index += raw.length;
-      continue;
-    }
-
-    const to = TO_PATTERN.exec(inner);
-    if (to !== null) {
-      pushNode({ type: "to", accountId: Number(to[1]) });
-      index += raw.length;
-      continue;
-    }
-
-    const reply = REPLY_PATTERN.exec(inner);
-    if (reply !== null) {
-      pushNode({
-        type: "reply",
-        accountId: Number(reply[1]),
-        roomId: Number(reply[2]),
-        messageId: String(reply[3]),
-      });
-      index += raw.length;
-      continue;
-    }
-
-    const account = ACCOUNT_PATTERN.exec(inner);
-    if (account !== null) {
-      const type = account[1] as "picon" | "pname" | "piconname";
-      pushNode({ type, accountId: Number(account[2]) });
-      index += raw.length;
-      continue;
-    }
-
-    // [qtmeta] は [qt] の直後にある場合のみ引用のメタ情報として扱う。
-    const meta = QTMETA_PATTERN.exec(inner);
-    if (meta !== null) {
-      const parent = top();
-      if (
-        parent?.tag === "qt" &&
-        !parent.metaConsumed &&
-        parent.nodes.length === 0
-      ) {
-        parent.accountId = Number(meta[1]);
-        parent.time = Number(meta[2]);
-        parent.metaConsumed = true;
-        index += raw.length;
-        continue;
-      }
-    }
-
-    pushText("[");
-    index += 1;
+  const result = document.run(source, 0);
+  if (!result.ok) {
+    // 任意の文字はテキストとして読めるため、ここには到達しない。
+    throw new Error("failed to parse the message");
   }
-
-  while (stack.length > 0) unwind();
-
-  return root;
+  return result.value;
 }
