@@ -71,6 +71,30 @@ export type UrlNode = {
   url: string;
 };
 
+/**
+ * `[dtext:{key}]`
+ *
+ * Chatwork 側で定義された文言に置き換わる。タスクの追加・完了を伝えるメッセージの
+ * タイトル (`task_added` / `task_done`) などで使われる。
+ */
+export type DtextNode = {
+  type: "dtext";
+  key: string;
+};
+
+/** `[task aid={account_ids} st={status} lt={limit} ltype={limit_type}]...[/task]` */
+export type TaskNode = {
+  type: "task";
+  /** 担当者のアカウント ID。`aid` はカンマ区切りで複数指定できる。 */
+  accountIds: number[];
+  status: "open" | "done";
+  /** 期限 (Unix 時間、秒)。期限なしの場合は null。 */
+  limitTime: number | null;
+  /** 期限の種類。`time` は時刻まで、`date` は日付のみ。期限なしの場合は null。 */
+  limitType: "time" | "date" | null;
+  children: ChatworkNode[];
+};
+
 export type ChatworkNode =
   | TextNode
   | ToNode
@@ -81,4 +105,6 @@ export type ChatworkNode =
   | PiconNode
   | PnameNode
   | PiconnameNode
-  | UrlNode;
+  | UrlNode
+  | DtextNode
+  | TaskNode;

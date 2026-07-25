@@ -32,6 +32,10 @@ const text = (value: string): TextNode => ({ type: "text", value });
 
 const digits = regex(/\d+/).map(Number);
 
+/** 決まった文字列を、その文字列そのものを型として持つ値にする。 */
+const literal = <T extends string>(value: T): Parser<T> =>
+  str(value).map((): T => value);
+
 // ---------------------------------------------------------------- 単独のタグ
 
 /** `[To:{account_id}]` */
@@ -70,6 +74,12 @@ const account = (
     .then(digits)
     .skip(str("]"))
     .map((accountId): ChatworkNode => ({ type, accountId }));
+
+/** `[dtext:{key}]` */
+const dtext = str("[dtext:")
+  .then(regex(/[0-9A-Za-z_]+/))
+  .skip(str("]"))
+  .map((key): ChatworkNode => ({ type: "dtext", key }));
 
 /**
  * `[url]http://...[/url]`
@@ -119,6 +129,37 @@ const quote = str("[qt]")
     }),
   );
 
+/** `aid` はカンマ区切りで複数のアカウント ID を持てる。 */
+const accountIdList = regex(/\d+(?:,\d+)*/).map((value) =>
+  value.split(",").map(Number),
+);
+
+const taskStatus = alt(literal("open"), literal("done"));
+
+/** `lt` と `ltype` は対で指定される。期限のないタスクではどちらも現れない。 */
+const taskLimit = seq(
+  str(" lt=").then(digits),
+  str(" ltype=").then(alt(literal("time"), literal("date"))),
+);
+
+const taskHeader = str("[task aid=")
+  .then(seq(accountIdList, str(" st=").then(taskStatus), optional(taskLimit)))
+  .skip(str("]"));
+
+/** `[task aid=... st=... lt=... ltype=...]...[/task]` */
+const task = seq(taskHeader, contentUntil("[/task]"))
+  .skip(str("[/task]"))
+  .map(
+    ([[accountIds, status, limit], children]): ChatworkNode => ({
+      type: "task",
+      accountIds,
+      status,
+      limitTime: limit?.[0] ?? null,
+      limitType: limit?.[1] ?? null,
+      children,
+    }),
+  );
+
 /** `[title]...[/title]` — `[info]` の直後にある場合のみ有効。 */
 const title = str("[title]")
   .then(contentUntil("[/title]"))
@@ -146,12 +187,14 @@ const node: Parser<ChatworkNode> = lazy(() =>
   alt<ChatworkNode>(
     quote,
     info,
+    task,
     hr,
     to,
     reply,
     account("picon"),
     account("pname"),
     account("piconname"),
+    dtext,
     url,
   ),
 );

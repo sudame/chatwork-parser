@@ -11,4 +11,6 @@ export type {
   PnameNode,
   PiconnameNode,
   UrlNode,
+  DtextNode,
+  TaskNode,
 } from "./types.ts";
